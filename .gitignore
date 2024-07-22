@@ -3,3 +3,4 @@ standalone_admin_password.txt
 *.pid
 __pycache__
 airflow.db
+.DS_Store
