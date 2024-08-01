@@ -8,6 +8,7 @@ from airflow.operators.python import (
 	PythonVirtualenvOperator,
 	BranchPythonOperator
 )
+import pprint
 
 with DAG(
     'movie_summary',
