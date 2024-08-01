@@ -21,15 +21,27 @@ with DAG(
         'email_on_failure': False,
         'email_on_retry': False,
         'retries': 1,
-        'retry_delay': timedelta(seconds=3)
+        'retry_delay': timedelta(seconds=3),
     },
-    description='simple bash DAG',
+    max_active_runs=1,
+    max_active_tasks=3,
+    description='movie DAG',
     schedule="10 4 * * * ",
 #    schedule=timedelta(days=1),
     start_date=datetime(2024, 7, 24),
     catchup=True,
     tags=['api', 'movies'],
 ) as dag:
+	def common_get_data(ds_nodash, url_param):
+        	from mov.api.call import save2df
+        	df = save2df(load_dt=ds_nodash, url_param=url_param)
+        	print(df[['movieCd', 'movieNm']].head(5))
+
+        	for k, v in url_param.items():
+            		df[k] = v
+
+        	p_cols = ['load_dt'] + list(url_param.keys())
+	
 	def get_data(ds_nodash):
 		print(ds_nodash)
 		from mov.api.call import gen_url, req, get_key, req2list, list2df, save2df
@@ -68,6 +80,7 @@ with DAG(
 		sum_df = g.agg({'audiCnt' : 'sum'}).reset_index()
 		print(df)
 
+	
 	rm_dir = BashOperator(
 		task_id='rm.dir',
 		bash_command='rm -rf ~/tmp/test_parquet/load_dt={{ ds_nodash }}'
@@ -128,15 +141,59 @@ with DAG(
 		trigger_rule='all_done'
 	)
 
-task_start >> join >> task_save
+	multi_y=PythonVirtualenvOperator(task_id='multi.y',
+		python_callable=common_get_data,
+        	system_site_packages=False,
+        	requirements=["git+https://github.com/thephunkmonk/movie_dag.git@0.2/api"],
+        	#op_args=["{{ds_nodash}}", "{{ds}}"],
+        	op_kwargs={
+            	"url_param": {"multiMovieYn": "Y"}
+        	},
+		) #commercial vs independent films
+	
+	multi_n=PythonVirtualenvOperator(
+		task_id='multi.n',
+        	python_callable=common_get_data,
+        	system_site_packages=False,
+        	requirements=["git+https://github.com/thephunkmonk/movie_dag.git@0.2/api"],
+        	op_args=["{{ds_nodash}}"],
+        	op_kwargs={"multiMovieYn": "F"}
+	)
+		
+	nation_k=PythonVirtualenvOperator(
+		task_id='nation.k',
+		python_callable=common_get_data,
+                system_site_packages=False,
+                requirements=["git+https://github.com/thephunkmonk/movie_dag.git@0.2/api"],
+                op_args=["{{ds_nodash}}"],
+                op_kwargs={"repNationCd": "K"}
+	) #country of film
+	
+	nation_f=PythonVirtualenvOperator(
+		task_id='nation.f',
+		python_callable=common_get_data,
+                system_site_packages=False,
+                requirements=["git+https://github.com/thephunkmonk/movie_dag.git@0.2/api"],
+                op_args=["{{ds_nodash}}"],
+                op_kwargs={"repNationCd": "F"}
+	)
+	task_fetch=EmptyOperator(task_id='fetch')
+	task_emptysave=EmptyOperator(task_id='get.end')
+	
+
+task_start >> join >> task_fetch
 
 task_start >> branch_op
+#branch_op >> task_fetch
+branch_op >> echo_task >> task_fetch
+branch_op >> rm_dir >> task_fetch
 
-branch_op >> task_get
-branch_op >> echo_task >> task_save
-branch_op >> rm_dir >> task_get 
+task_fetch >> [task_get, multi_y, multi_n, nation_k, nation_f] >> task_emptysave
 
-task_get >> task_save >> task_done >> task_end
+
+task_emptysave >> task_save >> task_done >> task_end
+
+
 task_start >> run_this >> task_end
 
 
