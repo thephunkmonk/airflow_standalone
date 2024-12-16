@@ -21,7 +21,7 @@ with DAG(
     description='simple bash DAG',
  #   schedule="10 4 * * * ",
     schedule=timedelta(days=1),
-    start_date=datetime(2024, 7, 11),
+    start_date=datetime(2024, 7, 10),
     catchup=True,
     tags=['import', 'bash','etl','db'],
 ) as dag:
@@ -49,6 +49,9 @@ with DAG(
         task_id="to_tmp",
         bash_command="""
            echo 'to tmp'
+           
+           CSV_PATH=~/data/csv/{{ds_nodash}}
+           bash {{ var.value.SH_HOME }}/csv2mysql.sh $CSV_PATH/csv.csv {{ds}}
     """
 
     )
@@ -57,6 +60,7 @@ with DAG(
         task_id="to_base",
         bash_command="""
            echo "to base"
+           bash {{ var.value.SH_HOME }}/tmp2base.sh {{ds}}
     """
     )
 
@@ -64,6 +68,10 @@ with DAG(
         task_id="make.done",
         bash_command="""
            echo "donezo"
+           figlet "DONNEEE biatch"
+           DONE_PATH=~/data/done/import/{{ds_nodash}}
+           mkdir -p ${DONE_PATH}
+           touch ${DONE_PATH}/_DONE
     """   
     )
 
@@ -74,9 +82,19 @@ with DAG(
     """,
         trigger_rule="one_failed"
     )
+    
+    task_create_table = BashOperator(
+        task_id="create.table",
+        bash_command="""
+           echo "create.table"
+           SQL={{ var.value.SQL_PATH }}/create_db_table.sql
+           echo "sql path=$SQL"
+           MYSQL_PWD='{{ var.value.SQL_PW }}' mysql -u root < $SQL
+    """
+    )    
 
     task_start = EmptyOperator(task_id ='task_start')
     task_end = EmptyOperator(task_id = 'task_end', trigger_rule="all_done")
 
-    task_start >> task_check >> task_csv >> task_tmp >> task_base >> task_done >> task_end
+    task_start >> task_check >> task_csv >> task_create_table >> task_tmp >> task_base >> task_done >> task_end
     task_check >> task_err >> task_end
